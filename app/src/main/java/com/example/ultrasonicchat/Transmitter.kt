@@ -16,6 +16,7 @@ class Transmitter {
         val padSamples = (0.25 * Constants.SAMPLE_RATE).toInt()
         val tx = AudioUtils.padSignal(signal, padSamples)
         val pcm = AudioUtils.toPcm16(tx)
+        onLog("Transmitter send params: sampleRate=${Constants.SAMPLE_RATE}Hz freq0=${Constants.FREQ_0}Hz freq1=${Constants.FREQ_1}Hz amp=${Constants.TX_AMPLITUDE}")
 
         val minBuffer = AudioTrack.getMinBufferSize(
             Constants.SAMPLE_RATE,
@@ -42,7 +43,7 @@ class Transmitter {
                         .build(),
                 )
                 .setTransferMode(AudioTrack.MODE_STREAM)
-                .setBufferSizeInBytes(maxOf(minBuffer, pcm.size * 2))
+                .setBufferSizeInBytes(maxOf(minBuffer, pcm.size * 2, Constants.CHUNK_SIZE * 4))
                 .build()
         } catch (throwable: Throwable) {
             onLog("Transmitter send failure: ${throwable.message ?: "unable to build AudioTrack"}")
@@ -108,7 +109,7 @@ class Transmitter {
                         .build(),
                 )
                 .setTransferMode(AudioTrack.MODE_STREAM)
-                .setBufferSizeInBytes(maxOf(minBuffer, pcm.size * 2))
+                .setBufferSizeInBytes(maxOf(minBuffer, pcm.size * 2, Constants.CHUNK_SIZE * 4))
                 .build()
         } catch (throwable: Throwable) {
             onLog("Transmitter send failure: ${throwable.message ?: "unable to build AudioTrack"}")

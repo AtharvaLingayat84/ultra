@@ -40,12 +40,13 @@ class Receiver {
                 running.set(false)
                 return@launch
             }
-            val blockFrames = maxOf(1024, Constants.HOP_SIZE)
+            val blockFrames = maxOf(2048, Constants.HOP_SIZE * 2)
             val tailKeep = (Constants.SAMPLE_RATE * Constants.POST_DETECT_TAIL_SECONDS).toInt()
             val maxBuffer = (Constants.SAMPLE_RATE * Constants.RECEIVE_WINDOW_SECONDS).toInt()
             val readBuffer = ShortArray(blockFrames)
             var rolling = FloatArray(0)
             var cooldownUntil = 0L
+            val frameLogs = ArrayDeque<String>()
 
             record = AudioRecord.Builder()
                 .setAudioSource(MediaRecorder.AudioSource.MIC)
@@ -56,7 +57,7 @@ class Receiver {
                         .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
                         .build(),
                 )
-                .setBufferSizeInBytes(maxOf(minBuffer, blockFrames * 2))
+                .setBufferSizeInBytes(maxOf(minBuffer, blockFrames * 2, Constants.CHUNK_SIZE * 4))
                 .build()
             if (record == null) {
                 onStatus("Unable to open microphone")
@@ -111,7 +112,14 @@ class Receiver {
                         rolling
                     }
 
-                    val message = Decoder.decodeAudio(latestWindow)
+                    frameLogs.clear()
+                    val message = Decoder.decodeAudio(latestWindow) { debug ->
+                        if (frameLogs.size >= 12) {
+                            frameLogs.removeFirst()
+                        }
+                        frameLogs.addLast(debug)
+                    }
+                    frameLogs.forEach(onLog)
                     if (message.isNotEmpty()) {
                         onMessage(message)
                         onLog("Decode hit: message length=${message.length}")

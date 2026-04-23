@@ -16,7 +16,7 @@ object Modulator {
             val freq = if (bits[i] == '1') Constants.FREQ_1 else Constants.FREQ_0
             for (j in 0 until samplesPerBit) {
                 val t = j * timeStep
-                chunk[j] = (0.5 * sin(2.0 * PI * freq * t)).toFloat()
+                chunk[j] = (Constants.TX_AMPLITUDE * sin(2.0 * PI * freq * t)).toFloat()
             }
             chunk.copyInto(signal, i * samplesPerBit)
         }

@@ -22,7 +22,7 @@ object Decoder {
         return chars.toString()
     }
 
-    fun decodeAudio(audio: FloatArray): String {
-        return decodeBits(Demodulator.demodulateBits(audio))
+    fun decodeAudio(audio: FloatArray, onDebug: (String) -> Unit = {}): String {
+        return decodeBits(Demodulator.demodulateBits(audio, onDebug))
     }
 }
