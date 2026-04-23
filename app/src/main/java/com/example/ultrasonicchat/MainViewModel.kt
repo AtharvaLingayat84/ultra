@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.Locale
 
 data class UiState(
@@ -22,6 +23,7 @@ data class UiState(
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val transmitter = Transmitter()
     private val receiver = Receiver()
+    private val transmitInProgress = AtomicBoolean(false)
 
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
@@ -52,10 +54,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
+        if (!transmitInProgress.compareAndSet(false, true)) {
+            log("Send ignored: transmission already running")
+            setStatus("Status: Sending already in progress")
+            return
+        }
+
         viewModelScope.launch {
-            setStatus("Status: Sending")
-            log("Send start: textLength=${text.length}")
             try {
+                setStatus("Status: Sending")
+                log("Send start: textLength=${text.length}")
                 transmitter.send(
                     text = text,
                     onLog = ::log,
@@ -66,15 +74,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val message = throwable.message ?: "send failed"
                 setStatus("Status: Error: $message")
                 log("Send failure: $message")
+            } finally {
+                transmitInProgress.set(false)
             }
         }
     }
 
     fun playTestSweep() {
+        if (!transmitInProgress.compareAndSet(false, true)) {
+            log("Test sweep ignored: transmission already running")
+            setStatus("Status: Sending already in progress")
+            return
+        }
         viewModelScope.launch {
-            setStatus("Status: Playing test sweep")
-            log("Test sweep start")
             try {
+                setStatus("Status: Playing test sweep")
+                log("Test sweep start")
                 transmitter.playAudibleTestSweep(onLog = ::log)
                 setStatus("Status: Test sweep complete")
                 log("Test sweep end")
@@ -82,6 +97,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val message = throwable.message ?: "test sweep failed"
                 setStatus("Status: Error: $message")
                 log("Test sweep failure: $message")
+            } finally {
+                transmitInProgress.set(false)
             }
         }
     }

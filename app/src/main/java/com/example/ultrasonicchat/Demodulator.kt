@@ -10,8 +10,8 @@ object Demodulator {
 
         var current = audio.copyOf()
         repeat(3) {
-            current = Biquad.highPass(Constants.SAMPLE_RATE.toFloat(), 17500f, 0.707f).process(current)
-            current = Biquad.lowPass(Constants.SAMPLE_RATE.toFloat(), 19500f, 0.707f).process(current)
+            current = Biquad.highPass(Constants.SAMPLE_RATE.toFloat(), 900f, 0.707f).process(current)
+            current = Biquad.lowPass(Constants.SAMPLE_RATE.toFloat(), 2600f, 0.707f).process(current)
         }
         return current
     }

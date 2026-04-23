@@ -3,8 +3,8 @@ package com.example.ultrasonicchat
 object Constants {
     const val SAMPLE_RATE = 44100
     const val BIT_DURATION = 0.1
-    const val FREQ_0 = 17800
-    const val FREQ_1 = 19000
+    const val FREQ_0 = 1200
+    const val FREQ_1 = 2200
     const val START_MARKER = "101010111100"
     const val END_MARKER = "001111010101"
     const val REPEAT_BITS = 2

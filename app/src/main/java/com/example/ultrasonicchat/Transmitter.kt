@@ -10,7 +10,7 @@ import kotlin.math.sin
 
 class Transmitter {
     suspend fun send(text: String, onLog: (String) -> Unit = {}) = withContext(Dispatchers.IO) {
-        onLog("Transmitter send: encoding payload")
+        onLog("Transmitter send: encoding message payload")
         val encoded = Encoder.encodeText(text)
         val signal = Modulator.modulate(encoded)
         val padSamples = (0.25 * Constants.SAMPLE_RATE).toInt()
@@ -23,7 +23,7 @@ class Transmitter {
             AudioFormat.ENCODING_PCM_16BIT,
         )
         if (minBuffer <= 0) {
-            onLog("Test sweep failure: invalid min buffer size=$minBuffer")
+            onLog("Transmitter send failure: invalid min buffer size=$minBuffer")
             throw IllegalStateException("AudioTrack min buffer unavailable")
         }
         val track = try {
@@ -45,18 +45,18 @@ class Transmitter {
                 .setBufferSizeInBytes(maxOf(minBuffer, pcm.size * 2))
                 .build()
         } catch (throwable: Throwable) {
-            onLog("Test sweep failure: ${throwable.message ?: "unable to build AudioTrack"}")
+            onLog("Transmitter send failure: ${throwable.message ?: "unable to build AudioTrack"}")
             throw throwable
         }
 
         try {
-            onLog("Transmitter send: play start")
+            onLog("Transmitter send: play start at ${Constants.FREQ_0}Hz/${Constants.FREQ_1}Hz")
             track.play()
             var offset = 0
             while (offset < pcm.size) {
                 val written = track.write(pcm, offset, pcm.size - offset)
                 if (written <= 0) {
-                    onLog("Transmitter send: write failed at offset=$offset")
+                    onLog("Transmitter send failure: write failed at offset=$offset")
                     break
                 }
                 offset += written
