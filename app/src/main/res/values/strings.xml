@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Ultrasonic Chat</string>
+    <string name="message_hint">Message to send</string>
+    <string name="send">Send</string>
+    <string name="start_listening">Start Listening</string>
+    <string name="stop_listening">Stop Listening</string>
+    <string name="status_idle">Status: Idle</string>
+    <string name="status_sending">Status: Sending</string>
+    <string name="status_listening">Status: Listening</string>
+    <string name="status_received">Status: Received</string>
+    <string name="status_error">Status: Error</string>
+    <string name="received_placeholder">Received message appears here.</string>
+</resources>
