@@ -18,18 +18,28 @@ class Receiver {
     fun start(
         scope: CoroutineScope,
         onStatus: (String) -> Unit,
+        onLog: (String) -> Unit,
         onMessage: (String) -> Unit,
     ): Job? {
         if (!running.compareAndSet(false, true)) {
+            onLog("Receive start ignored: already running")
             return job
         }
+        onStopLog = onLog
 
         val activeJob = scope.launch(Dispatchers.IO) {
+            onLog("Receive init")
             val minBuffer = AudioRecord.getMinBufferSize(
                 Constants.SAMPLE_RATE,
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,
             )
+            if (minBuffer <= 0) {
+                onStatus("Unable to configure microphone")
+                onLog("Receive failure: invalid min buffer size=$minBuffer")
+                running.set(false)
+                return@launch
+            }
             val blockFrames = maxOf(1024, Constants.HOP_SIZE)
             val tailKeep = (Constants.SAMPLE_RATE * Constants.POST_DETECT_TAIL_SECONDS).toInt()
             val maxBuffer = (Constants.SAMPLE_RATE * Constants.RECEIVE_WINDOW_SECONDS).toInt()
@@ -48,20 +58,37 @@ class Receiver {
                 )
                 .setBufferSizeInBytes(maxOf(minBuffer, blockFrames * 2))
                 .build()
+            if (record == null) {
+                onStatus("Unable to open microphone")
+                onLog("Receive failure: AudioRecord builder returned null")
+                running.set(false)
+                return@launch
+            }
 
             val recorder = record ?: run {
                 onStatus("Unable to open microphone")
+                onLog("Receive failure: unable to open microphone")
+                running.set(false)
+                return@launch
+            }
+            if (recorder.state != AudioRecord.STATE_INITIALIZED) {
+                onStatus("Unable to initialize microphone")
+                onLog("Receive failure: AudioRecord state=${recorder.state}")
+                recorder.release()
+                record = null
                 running.set(false)
                 return@launch
             }
 
             try {
+                onLog("Receive start: AudioRecord starting")
                 recorder.startRecording()
                 onStatus("Listening")
 
                 while (running.get() && isActive) {
                     val read = recorder.read(readBuffer, 0, readBuffer.size)
                     if (read <= 0) {
+                        onLog("Receive read returned $read")
                         continue
                     }
 
@@ -87,6 +114,7 @@ class Receiver {
                     val message = Decoder.decodeAudio(latestWindow)
                     if (message.isNotEmpty()) {
                         onMessage(message)
+                        onLog("Decode hit: message length=${message.length}")
                         rolling = AudioUtils.takeTail(rolling, tailKeep)
                         cooldownUntil = now + (Constants.POST_DETECT_COOLDOWN_SECONDS * 1000).toLong()
                         onStatus("Message received")
@@ -96,10 +124,12 @@ class Receiver {
                 try {
                     recorder.stop()
                 } catch (_: Throwable) {
+                    onLog("Receive stop failed: recorder.stop threw")
                 }
                 recorder.release()
                 record = null
                 running.set(false)
+                onLog("Receive end")
             }
         }
 
@@ -109,13 +139,17 @@ class Receiver {
 
     fun stop() {
         running.set(false)
+        onStopLog?.invoke("Receive stop: requested")
         try {
             record?.stop()
         } catch (_: Throwable) {
+            onStopLog?.invoke("Receive stop failed: recorder.stop threw")
         }
         record?.release()
         record = null
         job?.cancel()
         job = null
     }
+
+    private var onStopLog: ((String) -> Unit)? = null
 }

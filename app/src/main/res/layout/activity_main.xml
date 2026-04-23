@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:fillViewport="true">
@@ -49,6 +48,13 @@
                 android:text="@string/start_listening" />
         </LinearLayout>
 
+        <Button
+            android:id="@+id/sweepButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="@string/test_sweep" />
+
         <TextView
             android:id="@+id/statusText"
             android:layout_width="match_parent"
@@ -65,5 +71,30 @@
             android:minLines="4"
             android:text="@string/received_placeholder"
             android:textIsSelectable="true" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="@string/log_panel_title"
+            android:textAppearance="@style/TextAppearance.Material3.TitleMedium" />
+
+        <ScrollView
+            android:id="@+id/logScroll"
+            android:layout_width="match_parent"
+            android:layout_height="240dp"
+            android:layout_marginTop="8dp"
+            android:fillViewport="true"
+            android:background="#11000000"
+            android:padding="12dp">
+
+            <TextView
+                android:id="@+id/logText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/log_placeholder"
+                android:textIsSelectable="true"
+                android:typeface="monospace" />
+        </ScrollView>
     </LinearLayout>
 </ScrollView>
