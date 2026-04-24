@@ -114,15 +114,13 @@ class Receiver {
                         continue
                     }
 
-                    val windowSize = (config.sampleRate * config.receiveWindowSeconds).toInt()
-                    val latestWindow = if (rolling.size > windowSize) {
-                        rolling.copyOfRange(rolling.size - windowSize, rolling.size)
-                    } else {
-                        rolling
-                    }
-
                     frameLogs.clear()
-                    val message = Decoder.decodeAudio(latestWindow, config) { debug ->
+                    val rollingSeconds = rolling.size.toDouble() / config.sampleRate.toDouble()
+                    onLog(
+                        "Receive decode scope: rolling=${"%.2f".format(rollingSeconds)}s retained=${"%.2f".format(config.receiveWindowSeconds)}s samples=${rolling.size}",
+                    )
+
+                    val message = Decoder.decodeAudio(rolling, config) { debug ->
                         if (frameLogs.size >= 12) {
                             frameLogs.removeFirst()
                         }
@@ -135,6 +133,8 @@ class Receiver {
                         rolling = AudioUtils.takeTail(rolling, tailKeep)
                         cooldownUntil = now + (config.postDetectCooldownSeconds * 1000).toLong()
                         onStatus("Message received")
+                    } else {
+                        onLog("Decode miss: no complete frame recovered from rolling buffer")
                     }
                 }
             } finally {
