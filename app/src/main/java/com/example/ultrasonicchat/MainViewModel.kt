@@ -202,8 +202,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return null
         }
 
-        val lowCut = (freq0 - 750).coerceAtLeast(15000).toFloat()
-        val highCut = (freq1 + 850).coerceAtMost(21000).toFloat()
+        val lowCut = (freq0 - 300).coerceAtLeast(15000).toFloat()
+        val highCut = (freq1 + 500).coerceAtMost(21000).toFloat()
         return AudioConfig(
             freq0 = freq0,
             freq1 = freq1,

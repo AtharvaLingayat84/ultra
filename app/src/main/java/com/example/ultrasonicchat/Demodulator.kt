@@ -8,10 +8,17 @@ object Demodulator {
     fun bandPassFilter(audio: FloatArray, config: AudioConfig): FloatArray {
         if (audio.size < 32) return audio.copyOf()
 
-        var current = audio.copyOf()
-        current = Biquad.highPass(config.sampleRate.toFloat(), config.bandpassLowCutoff, 0.9f).process(current)
-        current = Biquad.lowPass(config.sampleRate.toFloat(), config.bandpassHighCutoff, 0.9f).process(current)
-        return current
+        fun cascade(input: FloatArray): FloatArray {
+            var current = input
+            current = Biquad.highPass(config.sampleRate.toFloat(), config.bandpassLowCutoff, 0.9f).process(current)
+            current = Biquad.lowPass(config.sampleRate.toFloat(), config.bandpassHighCutoff, 0.9f).process(current)
+            return current
+        }
+
+        val forward = cascade(audio.copyOf())
+        val reversed = forward.copyOf().apply { reverse() }
+        val backward = cascade(reversed)
+        return backward.apply { reverse() }
     }
 
     private fun chunkEnergy(chunk: FloatArray): Double {
@@ -63,7 +70,7 @@ object Demodulator {
             power0 >= power1 -> power0 / (power1 + 1e-12)
             else -> power1 / (power0 + 1e-12)
         }
-        if (ratio < config.confidenceRatio) {
+        if (ratio <= config.confidenceRatio) {
             return DetectionFrame(null, dominantFrequency, power0, power1, "ignored-low-confidence")
         }
         return when {
@@ -84,19 +91,7 @@ object Demodulator {
             start = bitstream.indexOf(Constants.START_MARKER, start + 1)
         }
 
-        if (best >= 0) return best
-
-        val approximateStartHits = markerHits(bitstream, Constants.START_MARKER)
-        for (startHit in approximateStartHits) {
-            val payloadStart = startHit.index + Constants.START_MARKER.length
-            if (payloadStart >= bitstream.length) continue
-            val endHits = markerHits(bitstream, Constants.END_MARKER, payloadStart)
-            for (endHit in endHits) {
-                best = maxOf(best, frameScore(startHit.index, endHit.index, startHit.matches, endHit.matches, false))
-            }
-        }
-
-        return best
+        return if (best >= 0) best else 0
     }
 
     private data class MarkerHit(val index: Int, val matches: Int)
@@ -137,13 +132,12 @@ object Demodulator {
     }
 
     private fun smoothDetections(rawBits: List<Char?>): List<Char?> {
-        if (rawBits.isEmpty()) return rawBits
+        if (rawBits.size < 3) return rawBits
         val smoothed = ArrayList<Char?>(rawBits.size)
-        for (i in rawBits.indices) {
-            val windowStart = maxOf(0, i - 2)
-            val window = rawBits.subList(windowStart, i + 1).filter { it == '0' || it == '1' }
+        for (i in 0 until rawBits.size - 2) {
+            val window = rawBits.subList(i, i + 3).filter { it == '0' || it == '1' }
             if (window.size < 2) {
-                smoothed.add(rawBits[i])
+                smoothed.add(null)
                 continue
             }
             val zeros = window.count { it == '0' }
@@ -209,19 +203,19 @@ object Demodulator {
                 val chunk = filtered.copyOfRange(start, start + config.chunkSize)
                 val energy = chunkEnergy(chunk)
                 val frameThreshold = maxOf(energyThreshold, minSignalPower)
-                val frame = detectFrequency(chunk, config)
-                if (frame.bit == null && energy < frameThreshold) {
+                if (energy < frameThreshold) {
                     rawBits.add(null)
                     onDebug(
-                        "Demod frame: energy=${"%.3e".format(energy)} frame=${frame.decision} rejected low-energy threshold=${"%.3e".format(frameThreshold)}",
+                        "Demod frame: energy=${"%.3e".format(energy)} rejected low-energy threshold=${"%.3e".format(frameThreshold)}",
                     )
                     start += config.hopSize
                     continue
                 }
 
+                val frame = detectFrequency(chunk, config)
                 rawBits.add(frame.bit)
                 onDebug(
-                    "Demod frame: energy=${"%.3e".format(energy)} dom=${frame.dominantFrequency}Hz p0=${"%.3e".format(frame.power0)} p1=${"%.3e".format(frame.power1)} decision=${frame.decision} accepted=${frame.bit != null || energy >= frameThreshold}",
+                    "Demod frame: energy=${"%.3e".format(energy)} dom=${frame.dominantFrequency}Hz p0=${"%.3e".format(frame.power0)} p1=${"%.3e".format(frame.power1)} decision=${frame.decision} accepted=${frame.bit != null}",
                 )
                 start += config.hopSize
             }

@@ -9,10 +9,10 @@ object Constants {
     const val END_MARKER = "001111010101"
     const val REPEAT_BITS = 2
 
-    const val CONFIDENCE_RATIO = 1.08
-    const val NOISE_FLOOR_MULTIPLIER = 1.6
-    const val BANDPASS_LOW_CUTOFF = 17150f
-    const val BANDPASS_HIGH_CUTOFF = 19750f
+    const val CONFIDENCE_RATIO = 1.2
+    const val NOISE_FLOOR_MULTIPLIER = 3.0
+    const val BANDPASS_LOW_CUTOFF = 17500f
+    const val BANDPASS_HIGH_CUTOFF = 19500f
     const val MIN_SIGNAL_DBFS = -78f
     const val RECEIVE_WINDOW_SECONDS = 35.0
     const val POST_DETECT_COOLDOWN_SECONDS = 0.75

@@ -1,7 +1,6 @@
 package com.example.ultrasonicchat
 
 object Decoder {
-    private const val MAX_MARKER_ERRORS = 2
     private const val MAX_STREAM_SHIFT = 1
     private const val MIN_READABLE_RATIO = 0.60
 
@@ -26,7 +25,7 @@ object Decoder {
         val bitstream = bits.joinToString(separator = "")
         onDebug("Decode stream: bits=${bits.size} bitstream=${bitstream.length}")
 
-        val candidates = buildCandidates(bitstream, onDebug)
+        val candidates = buildCandidates(bitstream)
         if (candidates.isEmpty()) {
             onDebug("Decode reject: no plausible framed payload")
             return ""
@@ -47,7 +46,7 @@ object Decoder {
         return best.text
     }
 
-    private fun buildCandidates(bitstream: String, onDebug: (String) -> Unit): List<Candidate> {
+    private fun buildCandidates(bitstream: String): List<Candidate> {
         val candidates = mutableListOf<Candidate>()
         for (streamShift in 0..MAX_STREAM_SHIFT) {
             val variant = if (streamShift == 0) bitstream else bitstream.drop(streamShift)
@@ -55,18 +54,10 @@ object Decoder {
                 continue
             }
             candidates += exactCandidates(variant, streamShift)
-            candidates += approximateCandidates(variant, streamShift, onDebug)
         }
-
-        val ranked = candidates
+        return candidates
             .filter { it.score >= 0 }
             .sortedByDescending { it.score }
-        if (ranked.isNotEmpty()) {
-            val top = ranked.first()
-            val exactCount = ranked.count { it.exact }
-            onDebug("Decode candidates: count=${ranked.size} exact=$exactCount topScore=${top.score}")
-        }
-        return ranked
     }
 
     private fun exactCandidates(variant: String, streamShift: Int): List<Candidate> {
@@ -91,67 +82,6 @@ object Decoder {
         return candidates
     }
 
-    private fun approximateCandidates(variant: String, streamShift: Int, onDebug: (String) -> Unit): List<Candidate> {
-        val startHits = markerHits(variant, Constants.START_MARKER)
-            .filter { it.matches >= Constants.START_MARKER.length - MAX_MARKER_ERRORS }
-            .take(6)
-        if (startHits.isEmpty()) {
-            onDebug("Decode fallback: approximate START marker not found shift=$streamShift")
-            return emptyList()
-        }
-
-        val candidates = mutableListOf<Candidate>()
-        for (startHit in startHits) {
-            val payloadStart = startHit.index + Constants.START_MARKER.length
-            if (payloadStart >= variant.length) continue
-
-            val endHits = markerHits(variant, Constants.END_MARKER, payloadStart)
-                .filter { it.matches >= Constants.END_MARKER.length - MAX_MARKER_ERRORS }
-                .take(6)
-            for (endHit in endHits) {
-                candidates += evaluateFrame(
-                    variant = variant,
-                    startIndex = startHit.index,
-                    endIndex = endHit.index,
-                    startMatches = startHit.matches,
-                    endMatches = endHit.matches,
-                    exact = false,
-                    streamShift = streamShift,
-                )
-            }
-        }
-
-        if (candidates.isEmpty()) {
-            onDebug("Decode fallback: approximate END marker not found shift=$streamShift")
-        }
-        return candidates
-    }
-
-    private data class MarkerHit(val index: Int, val matches: Int)
-
-    private fun markerHits(stream: String, marker: String, fromIndex: Int = 0): List<MarkerHit> {
-        if (stream.length < marker.length) return emptyList()
-        val hits = mutableListOf<MarkerHit>()
-        val lastStart = stream.length - marker.length
-        for (index in fromIndex..lastStart) {
-            val matches = markerMatches(stream, index, marker)
-            if (matches >= marker.length - MAX_MARKER_ERRORS) {
-                hits += MarkerHit(index, matches)
-            }
-        }
-        return hits.sortedWith(compareByDescending<MarkerHit> { it.matches }.thenBy { it.index })
-    }
-
-    private fun markerMatches(stream: String, index: Int, marker: String): Int {
-        var matches = 0
-        for (i in marker.indices) {
-            if (stream[index + i] == marker[i]) {
-                matches++
-            }
-        }
-        return matches
-    }
-
     private fun evaluateFrame(
         variant: String,
         startIndex: Int,
@@ -163,39 +93,41 @@ object Decoder {
     ): Candidate {
         var bestCandidate = Candidate("", startIndex, endIndex, startMatches, endMatches, 0, streamShift, exact, -1)
 
-        for (byteShift in 0..7) {
-            val payloadStart = startIndex + Constants.START_MARKER.length + byteShift
-            if (payloadStart > endIndex) break
-            val payloadBits = variant.substring(payloadStart, endIndex)
-            val text = decodePayload(payloadBits)
-            if (text.isEmpty()) continue
-            val score = scoreDecodedText(
+        val payloadBits = variant.substring(startIndex + Constants.START_MARKER.length, endIndex)
+        val text = decodePayload(payloadBits)
+        if (text.isEmpty()) {
+            return bestCandidate
+        }
+
+        val score = scoreDecodedText(
+            text = text,
+            exact = exact,
+            startMatches = startMatches,
+            endMatches = endMatches,
+            payloadBits = payloadBits.length,
+            byteShift = 0,
+        )
+        if (score > bestCandidate.score) {
+            bestCandidate = Candidate(
                 text = text,
-                exact = exact,
+                startIndex = startIndex,
+                endIndex = endIndex,
                 startMatches = startMatches,
                 endMatches = endMatches,
-                payloadBits = payloadBits.length,
-                byteShift = byteShift,
+                byteShift = 0,
+                streamShift = streamShift,
+                exact = exact,
+                score = score,
             )
-            if (score > bestCandidate.score) {
-                bestCandidate = Candidate(
-                    text = text,
-                    startIndex = startIndex,
-                    endIndex = endIndex,
-                    startMatches = startMatches,
-                    endMatches = endMatches,
-                    byteShift = byteShift,
-                    streamShift = streamShift,
-                    exact = exact,
-                    score = score,
-                )
-            }
         }
 
         return bestCandidate
     }
 
     private fun decodePayload(payloadBits: String): String {
+        if (payloadBits.length < 8 || payloadBits.length % 8 != 0) {
+            return ""
+        }
         val chars = StringBuilder()
         var index = 0
         while (index + 8 <= payloadBits.length) {
@@ -249,6 +181,11 @@ object Decoder {
 
         val printableRatio = printable.toDouble() / text.length.toDouble()
         if (printableRatio < MIN_READABLE_RATIO) return -1
+
+        if (text.length < 2) return -1
+
+        val alnumRatio = lettersOrDigits.toDouble() / text.length.toDouble()
+        if (lettersOrDigits == 0 || alnumRatio < 0.4) return -1
 
         var score = 0
         score += (printableRatio * 2000).toInt()
