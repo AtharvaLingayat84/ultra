@@ -2,6 +2,10 @@
 <resources>
     <string name="app_name">Ultrasonic Chat</string>
     <string name="message_hint">Message to send</string>
+    <string name="freq0_hint">Freq 0 (Hz)</string>
+    <string name="freq1_hint">Freq 1 (Hz)</string>
+    <string name="bit_duration_hint">Bit ms</string>
+    <string name="db_limit_hint">dB limit</string>
     <string name="send">Send</string>
     <string name="start_listening">Start Listening</string>
     <string name="stop_listening">Stop Listening</string>

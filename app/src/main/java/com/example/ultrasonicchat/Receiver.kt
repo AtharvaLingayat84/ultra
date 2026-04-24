@@ -1,5 +1,6 @@
 package com.example.ultrasonicchat
 
+import android.annotation.SuppressLint
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
@@ -15,8 +16,10 @@ class Receiver {
     private var record: AudioRecord? = null
     private var job: Job? = null
 
+    @SuppressLint("MissingPermission")
     fun start(
         scope: CoroutineScope,
+        config: AudioConfig,
         onStatus: (String) -> Unit,
         onLog: (String) -> Unit,
         onMessage: (String) -> Unit,
@@ -30,7 +33,7 @@ class Receiver {
         val activeJob = scope.launch(Dispatchers.IO) {
             onLog("Receive init")
             val minBuffer = AudioRecord.getMinBufferSize(
-                Constants.SAMPLE_RATE,
+                config.sampleRate,
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,
             )
@@ -40,24 +43,30 @@ class Receiver {
                 running.set(false)
                 return@launch
             }
-            val blockFrames = maxOf(2048, Constants.HOP_SIZE * 2)
-            val tailKeep = (Constants.SAMPLE_RATE * Constants.POST_DETECT_TAIL_SECONDS).toInt()
-            val maxBuffer = (Constants.SAMPLE_RATE * Constants.RECEIVE_WINDOW_SECONDS).toInt()
+            val blockFrames = maxOf(4096, config.hopSize * 2)
+            val tailKeep = (config.sampleRate * config.postDetectTailSeconds).toInt()
+            val maxBuffer = (config.sampleRate * config.receiveWindowSeconds).toInt()
             val readBuffer = ShortArray(blockFrames)
             var rolling = FloatArray(0)
             var cooldownUntil = 0L
             val frameLogs = ArrayDeque<String>()
 
+            val inputSource = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
+                MediaRecorder.AudioSource.UNPROCESSED
+            } else {
+                MediaRecorder.AudioSource.MIC
+            }
+
             record = AudioRecord.Builder()
-                .setAudioSource(MediaRecorder.AudioSource.MIC)
+                .setAudioSource(inputSource)
                 .setAudioFormat(
                     AudioFormat.Builder()
-                        .setSampleRate(Constants.SAMPLE_RATE)
+                        .setSampleRate(config.sampleRate)
                         .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
                         .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
                         .build(),
                 )
-                .setBufferSizeInBytes(maxOf(minBuffer, blockFrames * 2, Constants.CHUNK_SIZE * 4))
+                .setBufferSizeInBytes(maxOf(minBuffer, blockFrames * 4, config.chunkSize * 8))
                 .build()
             if (record == null) {
                 onStatus("Unable to open microphone")
@@ -82,7 +91,7 @@ class Receiver {
             }
 
             try {
-                onLog("Receive start: AudioRecord starting")
+                onLog("Receive start: AudioRecord starting source=$inputSource sampleRate=${config.sampleRate}Hz minDb=${config.minSignalDbfs}")
                 recorder.startRecording()
                 onStatus("Listening")
 
@@ -101,11 +110,11 @@ class Receiver {
                         continue
                     }
 
-                    if (rolling.size < Constants.CHUNK_SIZE * 3) {
+                    if (rolling.size < config.chunkSize * 3) {
                         continue
                     }
 
-                    val windowSize = (Constants.SAMPLE_RATE * Constants.RECEIVE_WINDOW_SECONDS).toInt()
+                    val windowSize = (config.sampleRate * config.receiveWindowSeconds).toInt()
                     val latestWindow = if (rolling.size > windowSize) {
                         rolling.copyOfRange(rolling.size - windowSize, rolling.size)
                     } else {
@@ -113,7 +122,7 @@ class Receiver {
                     }
 
                     frameLogs.clear()
-                    val message = Decoder.decodeAudio(latestWindow) { debug ->
+                    val message = Decoder.decodeAudio(latestWindow, config) { debug ->
                         if (frameLogs.size >= 12) {
                             frameLogs.removeFirst()
                         }
@@ -124,7 +133,7 @@ class Receiver {
                         onMessage(message)
                         onLog("Decode hit: message length=${message.length}")
                         rolling = AudioUtils.takeTail(rolling, tailKeep)
-                        cooldownUntil = now + (Constants.POST_DETECT_COOLDOWN_SECONDS * 1000).toLong()
+                        cooldownUntil = now + (config.postDetectCooldownSeconds * 1000).toLong()
                         onStatus("Message received")
                     }
                 }

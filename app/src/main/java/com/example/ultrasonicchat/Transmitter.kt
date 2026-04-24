@@ -9,17 +9,17 @@ import kotlin.math.PI
 import kotlin.math.sin
 
 class Transmitter {
-    suspend fun send(text: String, onLog: (String) -> Unit = {}) = withContext(Dispatchers.IO) {
+    suspend fun send(text: String, config: AudioConfig, onLog: (String) -> Unit = {}) = withContext(Dispatchers.IO) {
         onLog("Transmitter send: encoding message payload")
-        val encoded = Encoder.encodeText(text)
-        val signal = Modulator.modulate(encoded)
-        val padSamples = (0.25 * Constants.SAMPLE_RATE).toInt()
+        val encoded = Encoder.encodeText(text, config)
+        val signal = Modulator.modulate(encoded, config)
+        val padSamples = (0.25 * config.sampleRate).toInt()
         val tx = AudioUtils.padSignal(signal, padSamples)
         val pcm = AudioUtils.toPcm16(tx)
-        onLog("Transmitter send params: sampleRate=${Constants.SAMPLE_RATE}Hz freq0=${Constants.FREQ_0}Hz freq1=${Constants.FREQ_1}Hz amp=${Constants.TX_AMPLITUDE}")
+        onLog("Transmitter send params: sampleRate=${config.sampleRate}Hz freq0=${config.freq0}Hz freq1=${config.freq1}Hz amp=${config.txAmplitude} pcmSize=${pcm.size}")
 
         val minBuffer = AudioTrack.getMinBufferSize(
-            Constants.SAMPLE_RATE,
+            config.sampleRate,
             AudioFormat.CHANNEL_OUT_MONO,
             AudioFormat.ENCODING_PCM_16BIT,
         )
@@ -27,6 +27,8 @@ class Transmitter {
             onLog("Transmitter send failure: invalid min buffer size=$minBuffer")
             throw IllegalStateException("AudioTrack min buffer unavailable")
         }
+        
+        val bufferSize = maxOf(minBuffer, config.chunkSize * 8)
         val track = try {
             AudioTrack.Builder()
                 .setAudioAttributes(
@@ -37,13 +39,13 @@ class Transmitter {
                 )
                 .setAudioFormat(
                     AudioFormat.Builder()
-                        .setSampleRate(Constants.SAMPLE_RATE)
+                        .setSampleRate(config.sampleRate)
                         .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
                         .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
                         .build(),
                 )
                 .setTransferMode(AudioTrack.MODE_STREAM)
-                .setBufferSizeInBytes(maxOf(minBuffer, pcm.size * 2, Constants.CHUNK_SIZE * 4))
+                .setBufferSizeInBytes(bufferSize)
                 .build()
         } catch (throwable: Throwable) {
             onLog("Transmitter send failure: ${throwable.message ?: "unable to build AudioTrack"}")
@@ -51,17 +53,21 @@ class Transmitter {
         }
 
         try {
-            onLog("Transmitter send: play start at ${Constants.FREQ_0}Hz/${Constants.FREQ_1}Hz")
+            onLog("Transmitter send: play start at ${config.freq0}Hz/${config.freq1}Hz amplitude=${config.txAmplitude} bufferSize=$bufferSize")
+            track.setVolume(AudioTrack.getMaxVolume())
             track.play()
             var offset = 0
             while (offset < pcm.size) {
-                val written = track.write(pcm, offset, pcm.size - offset)
+                val toWrite = minOf(config.chunkSize, pcm.size - offset)
+                val written = track.write(pcm, offset, toWrite)
                 if (written <= 0) {
-                    onLog("Transmitter send failure: write failed at offset=$offset")
+                    onLog("Transmitter send failure: write failed at offset=$offset written=$written")
                     break
                 }
                 offset += written
             }
+            val durationMs = ((pcm.size.toDouble() / config.sampleRate) * 1000.0).toLong()
+            Thread.sleep(durationMs + 250L)
             track.stop()
             onLog("Transmitter send: play end")
         } finally {
@@ -93,6 +99,8 @@ class Transmitter {
             onLog("Transmitter send failure: invalid min buffer size=$minBuffer")
             throw IllegalStateException("AudioTrack min buffer unavailable")
         }
+        
+        val bufferSize = maxOf(minBuffer, pcm.size * 2)
         val track = try {
             AudioTrack.Builder()
                 .setAudioAttributes(
@@ -108,8 +116,8 @@ class Transmitter {
                         .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
                         .build(),
                 )
-                .setTransferMode(AudioTrack.MODE_STREAM)
-                .setBufferSizeInBytes(maxOf(minBuffer, pcm.size * 2, Constants.CHUNK_SIZE * 4))
+                .setTransferMode(AudioTrack.MODE_STATIC)
+                .setBufferSizeInBytes(bufferSize)
                 .build()
         } catch (throwable: Throwable) {
             onLog("Transmitter send failure: ${throwable.message ?: "unable to build AudioTrack"}")
@@ -117,17 +125,21 @@ class Transmitter {
         }
 
         try {
-            onLog("Test sweep start: 500Hz -> 2250Hz -> 4000Hz")
-            track.play()
+            onLog("Test sweep start: 500Hz -> 4000Hz")
+            track.setVolume(AudioTrack.getMaxVolume())
             var offset = 0
             while (offset < pcm.size) {
-                val written = track.write(pcm, offset, pcm.size - offset)
+                val toWrite = pcm.size - offset
+                val written = track.write(pcm, offset, toWrite)
                 if (written <= 0) {
                     onLog("Test sweep write failed at offset=$offset")
                     break
                 }
                 offset += written
             }
+            track.play()
+            val durationMs = ((pcm.size.toDouble() / Constants.SAMPLE_RATE) * 1000.0).toLong()
+            Thread.sleep(durationMs + 250L)
             track.stop()
             onLog("Test sweep end")
         } finally {

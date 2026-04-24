@@ -5,20 +5,36 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 object Demodulator {
-    fun bandPassFilter(audio: FloatArray): FloatArray {
+    fun bandPassFilter(audio: FloatArray, config: AudioConfig): FloatArray {
         if (audio.size < 32) return audio.copyOf()
 
         var current = audio.copyOf()
         repeat(3) {
-            current = Biquad.highPass(Constants.SAMPLE_RATE.toFloat(), 14500f, 0.707f).process(current)
-            current = Biquad.lowPass(Constants.SAMPLE_RATE.toFloat(), 17050f, 0.707f).process(current)
+            current = Biquad.highPass(config.sampleRate.toFloat(), config.bandpassLowCutoff, 0.707f).process(current)
+            current = Biquad.lowPass(config.sampleRate.toFloat(), config.bandpassHighCutoff, 0.707f).process(current)
         }
         return current
     }
 
-    private fun goertzelPower(chunk: FloatArray, targetFreq: Int): Double {
+    private fun chunkEnergy(chunk: FloatArray): Double {
         if (chunk.isEmpty()) return 0.0
-        val omega = 2.0 * PI * targetFreq / Constants.SAMPLE_RATE
+        var sum = 0.0
+        for (sample in chunk) {
+            sum += sample * sample
+        }
+        return sum / chunk.size
+    }
+
+    private fun adaptiveEnergyThreshold(audio: FloatArray, config: AudioConfig): Double {
+        if (audio.isEmpty()) return 0.0
+        val noiseWindow = minOf(audio.size, (0.5 * config.sampleRate).toInt())
+        if (noiseWindow <= 0) return 0.0
+        return chunkEnergy(audio.copyOfRange(0, noiseWindow)) * config.noiseFloorMultiplier
+    }
+
+    private fun goertzelPower(chunk: FloatArray, targetFreq: Int, sampleRate: Int): Double {
+        if (chunk.isEmpty()) return 0.0
+        val omega = 2.0 * PI * targetFreq / sampleRate
         val coeff = 2.0 * cos(omega)
         var sPrev = 0.0
         var sPrev2 = 0.0
@@ -38,18 +54,21 @@ object Demodulator {
         val decision: String,
     )
 
-    fun detectFrequency(chunk: FloatArray): DetectionFrame {
+    fun detectFrequency(chunk: FloatArray, config: AudioConfig): DetectionFrame {
         if (chunk.isEmpty()) {
             return DetectionFrame(null, 0, 0.0, 0.0, "ignored")
         }
-        val power0 = goertzelPower(chunk, Constants.FREQ_0)
-        val power1 = goertzelPower(chunk, Constants.FREQ_1)
-        val dominantFrequency = if (power1 > power0) Constants.FREQ_1 else Constants.FREQ_0
-        val margin = maxOf(power0, power1) * Constants.DETECTION_MARGIN_RATIO
+        val power0 = goertzelPower(chunk, config.freq0, config.sampleRate)
+        val power1 = goertzelPower(chunk, config.freq1, config.sampleRate)
+        val dominantFrequency = if (power1 > power0) config.freq1 else config.freq0
+        val ratio = when {
+            power0 >= power1 -> power0 / (power1 + 1e-12)
+            else -> power1 / (power0 + 1e-12)
+        }
         return when {
-            power0 > power1 + margin -> DetectionFrame('0', dominantFrequency, power0, power1, "0")
-            power1 > power0 + margin -> DetectionFrame('1', dominantFrequency, power0, power1, "1")
-            else -> DetectionFrame(null, dominantFrequency, power0, power1, "ignored")
+            ratio < config.confidenceRatio -> DetectionFrame(null, dominantFrequency, power0, power1, "ignored")
+            power0 >= power1 -> DetectionFrame('0', dominantFrequency, power0, power1, "0")
+            else -> DetectionFrame('1', dominantFrequency, power0, power1, "1")
         }
     }
 
@@ -98,22 +117,22 @@ object Demodulator {
         return smoothed
     }
 
-    private fun collapseRepeats(rawBits: List<Char?>): String {
+    private fun collapseRepeats(rawBits: List<Char?>, repeatBits: Int): String {
         var bestStream = ""
         var bestScore = -1
 
-        for (phase in 0 until Constants.REPEAT_BITS) {
+        for (phase in 0 until repeatBits) {
             val reduced = StringBuilder()
             var index = phase
-            while (index + Constants.REPEAT_BITS <= rawBits.size) {
-                val group = rawBits.subList(index, index + Constants.REPEAT_BITS)
+            while (index + repeatBits <= rawBits.size) {
+                val group = rawBits.subList(index, index + repeatBits)
                 val valid = group.filter { it == '0' || it == '1' }
                 if (valid.isNotEmpty()) {
                     val ones = valid.count { it == '1' }
                     val zeros = valid.size - ones
                     reduced.append(if (ones >= zeros) '1' else '0')
                 }
-                index += Constants.REPEAT_BITS
+                index += repeatBits
             }
             val stream = reduced.toString()
             val score = scoreStream(stream)
@@ -126,29 +145,41 @@ object Demodulator {
         return bestStream
     }
 
-    fun demodulateBits(audio: FloatArray, onDebug: (String) -> Unit = {}): List<Char> {
-        val filtered = bandPassFilter(audio)
-        if (filtered.size < Constants.CHUNK_SIZE) return emptyList()
+    fun demodulateBits(audio: FloatArray, config: AudioConfig, onDebug: (String) -> Unit = {}): List<Char> {
+        val filtered = bandPassFilter(audio, config)
+        if (filtered.size < config.chunkSize) return emptyList()
 
-        val step = maxOf(1, Constants.HOP_SIZE / 8)
+        val energyThreshold = adaptiveEnergyThreshold(filtered, config)
+        val minSignalPower = dbfsToPower(config.minSignalDbfs)
+
+        val step = maxOf(1, config.hopSize / 8)
         var bestStream = ""
         var bestScore = -1
 
         var offset = 0
-        while (offset < Constants.HOP_SIZE) {
-            val rawBits = ArrayList<Char?>(filtered.size / Constants.HOP_SIZE + 1)
+        while (offset < config.hopSize) {
+            val rawBits = ArrayList<Char?>(filtered.size / config.hopSize + 1)
             var start = offset
-            while (start + Constants.CHUNK_SIZE <= filtered.size) {
-                val chunk = filtered.copyOfRange(start, start + Constants.CHUNK_SIZE)
-                val frame = detectFrequency(chunk)
+            while (start + config.chunkSize <= filtered.size) {
+                val chunk = filtered.copyOfRange(start, start + config.chunkSize)
+                val energy = chunkEnergy(chunk)
+                val frameThreshold = maxOf(energyThreshold, minSignalPower)
+                if (energy < frameThreshold) {
+                    rawBits.add(null)
+                    onDebug("Demod frame: energy=${"%.3e".format(energy)} below threshold=${"%.3e".format(frameThreshold)}")
+                    start += config.hopSize
+                    continue
+                }
+
+                val frame = detectFrequency(chunk, config)
                 rawBits.add(frame.bit)
                 onDebug(
-                    "Demod frame: dom=${frame.dominantFrequency}Hz p0=${"%.3e".format(frame.power0)} p1=${"%.3e".format(frame.power1)} decision=${frame.decision}",
+                    "Demod frame: energy=${"%.3e".format(energy)} dom=${frame.dominantFrequency}Hz p0=${"%.3e".format(frame.power0)} p1=${"%.3e".format(frame.power1)} decision=${frame.decision}",
                 )
-                start += Constants.HOP_SIZE
+                start += config.hopSize
             }
 
-            val stream = collapseRepeats(smoothDetections(rawBits))
+            val stream = collapseRepeats(smoothDetections(rawBits), config.repeatBits)
             val score = scoreStream(stream)
             if (score > bestScore) {
                 bestScore = score
@@ -158,6 +189,11 @@ object Demodulator {
         }
 
         return bestStream.toList()
+    }
+
+    private fun dbfsToPower(dbfs: Float): Double {
+        val amplitude = Math.pow(10.0, dbfs / 20.0)
+        return amplitude * amplitude
     }
 
     private class Biquad(

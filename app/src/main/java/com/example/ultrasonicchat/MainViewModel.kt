@@ -14,6 +14,10 @@ import java.util.Locale
 
 data class UiState(
     val inputText: String = "",
+    val freq0Text: String = Constants.FREQ_0.toString(),
+    val freq1Text: String = Constants.FREQ_1.toString(),
+    val bitDurationMsText: String = (Constants.BIT_DURATION * 1000).toInt().toString(),
+    val dbLimitText: String = Constants.MIN_SIGNAL_DBFS.toInt().toString(),
     val receivedText: String = "Received message appears here.",
     val status: String = "Status: Idle",
     val isListening: Boolean = false,
@@ -32,6 +36,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateInput(text: String) {
         _state.update { it.copy(inputText = text) }
+    }
+
+    fun updateTuning(
+        freq0Text: String,
+        freq1Text: String,
+        bitDurationMsText: String,
+        dbLimitText: String,
+    ) {
+        _state.update {
+            it.copy(
+                freq0Text = freq0Text,
+                freq1Text = freq1Text,
+                bitDurationMsText = bitDurationMsText,
+                dbLimitText = dbLimitText,
+            )
+        }
     }
 
     fun log(message: String) {
@@ -54,6 +74,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
+        val config = parseAudioConfig() ?: return
+
         if (!transmitInProgress.compareAndSet(false, true)) {
             log("Send ignored: transmission already running")
             setStatus("Status: Sending already in progress")
@@ -63,9 +85,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             try {
                 setStatus("Status: Sending")
-                log("Send start: textLength=${text.length}")
+                log("Send start: textLength=${text.length} freq0=${config.freq0}Hz freq1=${config.freq1}Hz bitMs=${(config.bitDurationSeconds * 1000).toInt()} dbLimit=${config.minSignalDbfs}")
                 transmitter.send(
                     text = text,
+                    config = config,
                     onLog = ::log,
                 )
                 setStatus("Status: Sent")
@@ -113,8 +136,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun startReceiving() {
         if (receiveJob?.isActive == true) return
+        val config = parseAudioConfig() ?: return
         receiveJob = receiver.start(
             scope = viewModelScope,
+            config = config,
             onStatus = { status -> setStatus("Status: $status") },
             onLog = ::log,
             onMessage = { message ->
@@ -128,7 +153,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             },
         )
         _state.update { it.copy(isListening = true, status = "Status: Listening") }
-        log("Receive start")
+        log("Receive start: freq0=${config.freq0}Hz freq1=${config.freq1}Hz bitMs=${(config.bitDurationSeconds * 1000).toInt()} dbLimit=${config.minSignalDbfs}")
     }
 
     fun stopReceiving() {
@@ -147,5 +172,45 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun timestamp(): String {
         val now = java.text.SimpleDateFormat("HH:mm:ss", Locale.getDefault())
         return now.format(java.util.Date())
+    }
+
+    private fun parseAudioConfig(): AudioConfig? {
+        val ui = state.value
+        val freq0 = ui.freq0Text.toIntOrNull()
+        val freq1 = ui.freq1Text.toIntOrNull()
+        val bitMs = ui.bitDurationMsText.toIntOrNull()
+        val dbLimit = ui.dbLimitText.toFloatOrNull()
+
+        if (freq0 == null || freq1 == null || bitMs == null || dbLimit == null) {
+            setStatus("Status: Invalid tuning values")
+            log("Tuning parse failed: freq0='${ui.freq0Text}' freq1='${ui.freq1Text}' bitMs='${ui.bitDurationMsText}' db='${ui.dbLimitText}'")
+            return null
+        }
+        if (freq0 < 12000 || freq1 > 20000 || freq1 <= freq0) {
+            setStatus("Status: Frequency range invalid")
+            log("Tuning validation failed: require 12000 <= freq0 < freq1 <= 20000")
+            return null
+        }
+        if (bitMs !in 30..400) {
+            setStatus("Status: Bit duration must be 30-400ms")
+            log("Tuning validation failed: bit duration=$bitMs ms")
+            return null
+        }
+        if (dbLimit !in -90f..-20f) {
+            setStatus("Status: dB limit must be -90 to -20")
+            log("Tuning validation failed: db limit=$dbLimit dBFS")
+            return null
+        }
+
+        val lowCut = (freq0 - 500).coerceAtLeast(11000).toFloat()
+        val highCut = (freq1 + 500).coerceAtMost(20500).toFloat()
+        return AudioConfig(
+            freq0 = freq0,
+            freq1 = freq1,
+            bitDurationSeconds = bitMs / 1000.0,
+            minSignalDbfs = dbLimit,
+            bandpassLowCutoff = lowCut,
+            bandpassHighCutoff = highCut,
+        )
     }
 }

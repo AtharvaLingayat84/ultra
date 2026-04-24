@@ -4,29 +4,31 @@ import kotlin.math.PI
 import kotlin.math.sin
 
 object Modulator {
-    fun modulate(bits: String): FloatArray {
-        val samplesPerBit = Constants.CHUNK_SIZE
+    fun modulate(bits: String, config: AudioConfig): FloatArray {
+        val samplesPerBit = config.chunkSize
         if (bits.isEmpty()) return FloatArray(0)
 
-        val timeStep = 1.0 / Constants.SAMPLE_RATE
-        val chunk = FloatArray(samplesPerBit)
         val signal = FloatArray(bits.length * samplesPerBit)
 
         for (i in bits.indices) {
-            val freq = if (bits[i] == '1') Constants.FREQ_1 else Constants.FREQ_0
+            val freq = if (bits[i] == '1') config.freq1 else config.freq0
+            val baseIndex = i * samplesPerBit
             for (j in 0 until samplesPerBit) {
-                val t = j * timeStep
-                chunk[j] = (Constants.TX_AMPLITUDE * sin(2.0 * PI * freq * t)).toFloat()
+                val sampleIndex = baseIndex + j
+                val t = sampleIndex.toDouble() / config.sampleRate
+                signal[sampleIndex] = (config.txAmplitude * sin(2.0 * PI * freq * t)).toFloat()
             }
-            chunk.copyInto(signal, i * samplesPerBit)
         }
 
-        val fadeSamples = maxOf(1, (0.005 * Constants.SAMPLE_RATE).toInt())
+        val fadeSamples = maxOf(1, (0.005 * config.sampleRate).toInt())
         val envelope = FloatArray(signal.size) { 1f }
-        val rampSize = minOf(fadeSamples, signal.size)
+        val rampSize = minOf(fadeSamples, signal.size / 2)
         for (i in 0 until rampSize) {
-            val value = i.toFloat() / rampSize.toFloat()
+            val value = (i.toFloat() / rampSize.toFloat()).let { t -> t * t }
             envelope[i] = value
+        }
+        for (i in 0 until rampSize) {
+            val value = ((rampSize - i).toFloat() / rampSize.toFloat()).let { t -> t * t }
             envelope[signal.lastIndex - i] = value
         }
 

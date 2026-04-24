@@ -18,6 +18,10 @@ import kotlinx.coroutines.launch
 class MainActivity : AppCompatActivity() {
     private val viewModel: MainViewModel by viewModels()
     private lateinit var messageInput: EditText
+    private lateinit var freq0Input: EditText
+    private lateinit var freq1Input: EditText
+    private lateinit var bitDurationInput: EditText
+    private lateinit var dbLimitInput: EditText
     private lateinit var sendButton: Button
     private lateinit var receiveButton: Button
     private lateinit var sweepButton: Button
@@ -48,6 +52,10 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         messageInput = findViewById(R.id.messageInput)
+        freq0Input = findViewById(R.id.freq0Input)
+        freq1Input = findViewById(R.id.freq1Input)
+        bitDurationInput = findViewById(R.id.bitDurationInput)
+        dbLimitInput = findViewById(R.id.dbLimitInput)
         sendButton = findViewById(R.id.sendButton)
         receiveButton = findViewById(R.id.receiveButton)
         sweepButton = findViewById(R.id.sweepButton)
@@ -60,11 +68,26 @@ class MainActivity : AppCompatActivity() {
             viewModel.updateInput(text?.toString().orEmpty())
         }
 
+        val tuningWatcher = {
+            viewModel.updateTuning(
+                freq0Text = freq0Input.text?.toString().orEmpty(),
+                freq1Text = freq1Input.text?.toString().orEmpty(),
+                bitDurationMsText = bitDurationInput.text?.toString().orEmpty(),
+                dbLimitText = dbLimitInput.text?.toString().orEmpty(),
+            )
+        }
+        freq0Input.addTextChangedListener { tuningWatcher.invoke() }
+        freq1Input.addTextChangedListener { tuningWatcher.invoke() }
+        bitDurationInput.addTextChangedListener { tuningWatcher.invoke() }
+        dbLimitInput.addTextChangedListener { tuningWatcher.invoke() }
+
         sendButton.setOnClickListener {
+            tuningWatcher.invoke()
             ensurePermissions { viewModel.sendMessage() }
         }
 
         receiveButton.setOnClickListener {
+            tuningWatcher.invoke()
             ensurePermissions { viewModel.toggleReceiving() }
         }
 
@@ -78,6 +101,18 @@ class MainActivity : AppCompatActivity() {
                     if (messageInput.text?.toString() != state.inputText) {
                         messageInput.setText(state.inputText)
                         messageInput.setSelection(state.inputText.length)
+                    }
+                    if (freq0Input.text?.toString() != state.freq0Text) {
+                        freq0Input.setText(state.freq0Text)
+                    }
+                    if (freq1Input.text?.toString() != state.freq1Text) {
+                        freq1Input.setText(state.freq1Text)
+                    }
+                    if (bitDurationInput.text?.toString() != state.bitDurationMsText) {
+                        bitDurationInput.setText(state.bitDurationMsText)
+                    }
+                    if (dbLimitInput.text?.toString() != state.dbLimitText) {
+                        dbLimitInput.setText(state.dbLimitText)
                     }
                     statusText.text = state.status
                     receivedText.text = state.receivedText
