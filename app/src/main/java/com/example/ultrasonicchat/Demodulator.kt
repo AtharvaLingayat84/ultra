@@ -9,10 +9,8 @@ object Demodulator {
         if (audio.size < 32) return audio.copyOf()
 
         var current = audio.copyOf()
-        repeat(3) {
-            current = Biquad.highPass(config.sampleRate.toFloat(), config.bandpassLowCutoff, 0.707f).process(current)
-            current = Biquad.lowPass(config.sampleRate.toFloat(), config.bandpassHighCutoff, 0.707f).process(current)
-        }
+        current = Biquad.highPass(config.sampleRate.toFloat(), config.bandpassLowCutoff, 0.9f).process(current)
+        current = Biquad.lowPass(config.sampleRate.toFloat(), config.bandpassHighCutoff, 0.9f).process(current)
         return current
     }
 
@@ -65,8 +63,10 @@ object Demodulator {
             power0 >= power1 -> power0 / (power1 + 1e-12)
             else -> power1 / (power0 + 1e-12)
         }
+        if (ratio < config.confidenceRatio) {
+            return DetectionFrame(null, dominantFrequency, power0, power1, "ignored-low-confidence")
+        }
         return when {
-            ratio < config.confidenceRatio -> DetectionFrame(null, dominantFrequency, power0, power1, "ignored")
             power0 >= power1 -> DetectionFrame('0', dominantFrequency, power0, power1, "0")
             else -> DetectionFrame('1', dominantFrequency, power0, power1, "1")
         }
@@ -151,6 +151,9 @@ object Demodulator {
 
         val energyThreshold = adaptiveEnergyThreshold(filtered, config)
         val minSignalPower = dbfsToPower(config.minSignalDbfs)
+        onDebug(
+            "Demod start: size=${filtered.size} chunk=${config.chunkSize} hop=${config.hopSize} freq0=${config.freq0}Hz freq1=${config.freq1}Hz band=${config.bandpassLowCutoff}-${config.bandpassHighCutoff}Hz energyTh=${"%.3e".format(energyThreshold)} minPower=${"%.3e".format(minSignalPower)}",
+        )
 
         val step = maxOf(1, config.hopSize / 8)
         var bestStream = ""
@@ -164,17 +167,19 @@ object Demodulator {
                 val chunk = filtered.copyOfRange(start, start + config.chunkSize)
                 val energy = chunkEnergy(chunk)
                 val frameThreshold = maxOf(energyThreshold, minSignalPower)
-                if (energy < frameThreshold) {
+                val frame = detectFrequency(chunk, config)
+                if (frame.bit == null && energy < frameThreshold) {
                     rawBits.add(null)
-                    onDebug("Demod frame: energy=${"%.3e".format(energy)} below threshold=${"%.3e".format(frameThreshold)}")
+                    onDebug(
+                        "Demod frame: energy=${"%.3e".format(energy)} frame=${frame.decision} rejected low-energy threshold=${"%.3e".format(frameThreshold)}",
+                    )
                     start += config.hopSize
                     continue
                 }
 
-                val frame = detectFrequency(chunk, config)
                 rawBits.add(frame.bit)
                 onDebug(
-                    "Demod frame: energy=${"%.3e".format(energy)} dom=${frame.dominantFrequency}Hz p0=${"%.3e".format(frame.power0)} p1=${"%.3e".format(frame.power1)} decision=${frame.decision}",
+                    "Demod frame: energy=${"%.3e".format(energy)} dom=${frame.dominantFrequency}Hz p0=${"%.3e".format(frame.power0)} p1=${"%.3e".format(frame.power1)} decision=${frame.decision} accepted=${frame.bit != null || energy >= frameThreshold}",
                 )
                 start += config.hopSize
             }

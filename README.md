@@ -2,7 +2,7 @@
 
 ## Overview
 
-This app transmits text messages using ultrasonic sound (≈17–19 kHz) between devices.
+This app transmits text messages using near-ultrasonic sound (≈18–19 kHz) between devices.
 This document defines what to test to verify correctness, stability, and real-world usability.
 
 ---
@@ -68,7 +68,7 @@ This document defines what to test to verify correctness, stability, and real-wo
 
 ### 5. Frequency Detection (Single Device)
 
-* Play a constant tone (17800 Hz / 19000 Hz)
+* Play a constant tone (17900 Hz / 18900 Hz)
 * Verify:
 
   * Correct frequency is detected
@@ -216,7 +216,7 @@ Expected:
 
 * Lower frequency:
 
-  * Try 17600 / 18800
+  * Try 17900 / 18900
 
 ### Issue: Wrong decoding
 

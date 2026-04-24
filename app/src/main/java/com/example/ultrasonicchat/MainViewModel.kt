@@ -186,24 +186,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             log("Tuning parse failed: freq0='${ui.freq0Text}' freq1='${ui.freq1Text}' bitMs='${ui.bitDurationMsText}' db='${ui.dbLimitText}'")
             return null
         }
-        if (freq0 < 12000 || freq1 > 20000 || freq1 <= freq0) {
+        if (freq0 < 17000 || freq1 > 20000 || freq1 <= freq0) {
             setStatus("Status: Frequency range invalid")
-            log("Tuning validation failed: require 12000 <= freq0 < freq1 <= 20000")
+            log("Tuning validation failed: require 17000 <= freq0 < freq1 <= 20000")
             return null
         }
-        if (bitMs !in 30..400) {
-            setStatus("Status: Bit duration must be 30-400ms")
+        if (bitMs !in 20..400) {
+            setStatus("Status: Bit duration must be 20-400ms")
             log("Tuning validation failed: bit duration=$bitMs ms")
             return null
         }
-        if (dbLimit !in -90f..-20f) {
-            setStatus("Status: dB limit must be -90 to -20")
+        if (dbLimit !in -100f..-10f) {
+            setStatus("Status: dB limit must be -100 to -10")
             log("Tuning validation failed: db limit=$dbLimit dBFS")
             return null
         }
 
-        val lowCut = (freq0 - 500).coerceAtLeast(11000).toFloat()
-        val highCut = (freq1 + 500).coerceAtMost(20500).toFloat()
+        val lowCut = (freq0 - 750).coerceAtLeast(15000).toFloat()
+        val highCut = (freq1 + 850).coerceAtMost(21000).toFloat()
         return AudioConfig(
             freq0 = freq0,
             freq1 = freq1,
