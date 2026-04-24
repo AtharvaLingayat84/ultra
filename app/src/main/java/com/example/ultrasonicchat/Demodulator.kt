@@ -74,23 +74,65 @@ object Demodulator {
 
     private fun scoreStream(bitstream: String): Int {
         if (bitstream.isEmpty()) return -1
-        var score = 0
+        var best = -1
         var start = bitstream.indexOf(Constants.START_MARKER)
-        if (start != -1) {
-            score += 1000
-            start += Constants.START_MARKER.length
-            val end = bitstream.indexOf(Constants.END_MARKER, start)
+        while (start != -1) {
+            val end = bitstream.indexOf(Constants.END_MARKER, start + Constants.START_MARKER.length)
             if (end != -1) {
-                score += 1000
-                val payload = bitstream.substring(start, end)
-                if (payload.length >= 8) {
-                    score += payload.length
-                    if (payload.length % 8 == 0) {
-                        score += 100
-                    }
-                }
+                best = maxOf(best, frameScore(start, end, Constants.START_MARKER.length, Constants.END_MARKER.length, true))
+            }
+            start = bitstream.indexOf(Constants.START_MARKER, start + 1)
+        }
+
+        if (best >= 0) return best
+
+        val approximateStartHits = markerHits(bitstream, Constants.START_MARKER)
+        for (startHit in approximateStartHits) {
+            val payloadStart = startHit.index + Constants.START_MARKER.length
+            if (payloadStart >= bitstream.length) continue
+            val endHits = markerHits(bitstream, Constants.END_MARKER, payloadStart)
+            for (endHit in endHits) {
+                best = maxOf(best, frameScore(startHit.index, endHit.index, startHit.matches, endHit.matches, false))
             }
         }
+
+        return best
+    }
+
+    private data class MarkerHit(val index: Int, val matches: Int)
+
+    private fun markerHits(stream: String, marker: String, fromIndex: Int = 0): List<MarkerHit> {
+        if (stream.length < marker.length) return emptyList()
+        val hits = mutableListOf<MarkerHit>()
+        val lastStart = stream.length - marker.length
+        for (index in fromIndex..lastStart) {
+            val matches = markerMatches(stream, index, marker)
+            if (matches >= marker.length - 2) {
+                hits += MarkerHit(index, matches)
+            }
+        }
+        return hits.sortedWith(compareByDescending<MarkerHit> { it.matches }.thenBy { it.index })
+    }
+
+    private fun markerMatches(stream: String, index: Int, marker: String): Int {
+        var matches = 0
+        for (i in marker.indices) {
+            if (stream[index + i] == marker[i]) {
+                matches++
+            }
+        }
+        return matches
+    }
+
+    private fun frameScore(startIndex: Int, endIndex: Int, startMatches: Int, endMatches: Int, exact: Boolean): Int {
+        val payloadBits = (endIndex - (startIndex + Constants.START_MARKER.length)).coerceAtLeast(0)
+        var score = 0
+        score += if (exact) 3000 else 0
+        score += startMatches * 200
+        score += endMatches * 200
+        score += payloadBits
+        score += if (payloadBits % 8 == 0) 150 else 0
+        score -= kotlin.math.abs(payloadBits - 8 * (payloadBits / 8)) * 5
         return score
     }
 
@@ -186,6 +228,7 @@ object Demodulator {
 
             val stream = collapseRepeats(smoothDetections(rawBits), config.repeatBits)
             val score = scoreStream(stream)
+            onDebug("Demod stream: offset=$offset len=${stream.length} score=$score preview=${previewBits(stream)}")
             if (score > bestScore) {
                 bestScore = score
                 bestStream = stream
@@ -193,7 +236,15 @@ object Demodulator {
             offset += step
         }
 
+        if (bestStream.isNotEmpty()) {
+            onDebug("Demod selected: len=${bestStream.length} score=$bestScore preview=${previewBits(bestStream)}")
+        }
         return bestStream.toList()
+    }
+
+    private fun previewBits(bitstream: String): String {
+        if (bitstream.length <= 192) return bitstream
+        return bitstream.take(96) + "..." + bitstream.takeLast(48)
     }
 
     private fun dbfsToPower(dbfs: Float): Double {

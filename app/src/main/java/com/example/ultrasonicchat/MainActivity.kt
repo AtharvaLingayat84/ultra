@@ -129,6 +129,8 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+
+        maybeAutoStartReceiving()
     }
 
     private fun ensurePermissions(action: () -> Unit) {
@@ -145,6 +147,20 @@ class MainActivity : AppCompatActivity() {
             viewModel.log("Permission request launched")
             pendingAction = action
             permissionLauncher.launch(requiredPermissions)
+        }
+    }
+
+    private fun maybeAutoStartReceiving() {
+        val requiredPermissions = arrayOf(
+            Manifest.permission.RECORD_AUDIO,
+            Manifest.permission.MODIFY_AUDIO_SETTINGS,
+        )
+        val granted = requiredPermissions.all {
+            ContextCompat.checkSelfPermission(this, it) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        }
+        if (granted) {
+            viewModel.log("Auto-starting receiver on launch")
+            viewModel.startReceiving()
         }
     }
 }

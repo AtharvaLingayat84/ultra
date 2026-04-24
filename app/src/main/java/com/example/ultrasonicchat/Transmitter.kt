@@ -11,6 +11,7 @@ import kotlin.math.sin
 class Transmitter {
     suspend fun send(text: String, config: AudioConfig, onLog: (String) -> Unit = {}) = withContext(Dispatchers.IO) {
         onLog("Transmitter send: encoding message payload")
+        onLog("Transmitter bits: ${Encoder.describeEncodedText(text, config)}")
         val encoded = Encoder.encodeText(text, config)
         val signal = Modulator.modulate(encoded, config)
         val padSamples = (0.25 * config.sampleRate).toInt()
