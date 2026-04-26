@@ -53,6 +53,10 @@ class Transmitter {
             throw throwable
         }
 
+        onLog(
+            "Transmitter config: requestedRate=${config.sampleRate}Hz actualRate=${track.sampleRate}Hz channelCount=${track.channelCount} state=${track.state} buffer=${track.bufferSizeInFrames} frames",
+        )
+
         try {
             onLog("Transmitter send: play start at ${config.freq0}Hz/${config.freq1}Hz amplitude=${config.txAmplitude} bufferSize=$bufferSize")
             track.setVolume(AudioTrack.getMaxVolume())
@@ -124,6 +128,10 @@ class Transmitter {
             onLog("Transmitter send failure: ${throwable.message ?: "unable to build AudioTrack"}")
             throw throwable
         }
+
+        onLog(
+            "Test sweep config: requestedRate=${Constants.SAMPLE_RATE}Hz actualRate=${track.sampleRate}Hz channelCount=${track.channelCount} state=${track.state} buffer=${track.bufferSizeInFrames} frames",
+        )
 
         try {
             onLog("Test sweep start: 500Hz -> 4000Hz")

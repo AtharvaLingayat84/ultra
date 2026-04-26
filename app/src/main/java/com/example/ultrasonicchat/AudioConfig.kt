@@ -1,5 +1,7 @@
 package com.example.ultrasonicchat
 
+import kotlin.math.roundToInt
+
 data class AudioConfig(
     val sampleRate: Int = Constants.SAMPLE_RATE,
     val bitDurationSeconds: Double = Constants.BIT_DURATION,
@@ -16,7 +18,7 @@ data class AudioConfig(
     val txAmplitude: Float = Constants.TX_AMPLITUDE,
     val minSignalDbfs: Float = Constants.MIN_SIGNAL_DBFS,
 ) {
-    val chunkSize: Int = (sampleRate * bitDurationSeconds).toInt().coerceAtLeast(256)
-    val hopSize: Int = (chunkSize / 2).coerceAtLeast(128)
+    val chunkSize: Int = (sampleRate * bitDurationSeconds).roundToInt().coerceAtLeast(256)
+    val hopSize: Int = (chunkSize / 2.0).roundToInt().coerceAtLeast(128)
 }
 

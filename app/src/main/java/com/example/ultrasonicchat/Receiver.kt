@@ -90,6 +90,10 @@ class Receiver {
                 return@launch
             }
 
+            onLog(
+                "Receive config: requestedRate=${config.sampleRate}Hz actualRate=${recorder.sampleRate}Hz channelCount=${recorder.channelCount} encoding=${recorder.audioFormat} buffer=${recorder.bufferSizeInFrames} frames",
+            )
+
             try {
                 onLog("Receive start: AudioRecord starting source=$inputSource sampleRate=${config.sampleRate}Hz minDb=${config.minSignalDbfs}")
                 recorder.startRecording()

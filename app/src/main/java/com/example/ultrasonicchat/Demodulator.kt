@@ -132,23 +132,21 @@ object Demodulator {
     }
 
     private fun smoothDetections(rawBits: List<Char?>): List<Char?> {
-        if (rawBits.size < 3) return rawBits
-        val smoothed = ArrayList<Char?>(rawBits.size)
-        for (i in 0 until rawBits.size - 2) {
-            val window = rawBits.subList(i, i + 3).filter { it == '0' || it == '1' }
-            if (window.size < 2) {
-                smoothed.add(null)
-                continue
-            }
+        if (rawBits.size < 3) return rawBits.toList()
+        val smoothed = MutableList<Char?>(rawBits.size) { null }
+        for (i in rawBits.indices) {
+            val start = maxOf(0, i - 1)
+            val end = minOf(rawBits.lastIndex, i + 1)
+            val window = rawBits.subList(start, end + 1).filter { it == '0' || it == '1' }
+            if (window.size < 2) continue
+
             val zeros = window.count { it == '0' }
             val ones = window.count { it == '1' }
-            smoothed.add(
-                when {
-                    ones > zeros -> '1'
-                    zeros > ones -> '0'
-                    else -> null
-                },
-            )
+            smoothed[i] = when {
+                ones > zeros -> '1'
+                zeros > ones -> '0'
+                else -> null
+            }
         }
         return smoothed
     }

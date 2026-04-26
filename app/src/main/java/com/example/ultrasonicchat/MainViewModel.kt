@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.Locale
+import kotlin.math.min
 
 data class UiState(
     val inputText: String = "",
@@ -202,8 +203,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return null
         }
 
-        val lowCut = (freq0 - 300).coerceAtLeast(15000).toFloat()
-        val highCut = (freq1 + 500).coerceAtMost(21000).toFloat()
+        val nyquist = Constants.SAMPLE_RATE / 2f
+        val lowCut = (freq0 - 700).coerceAtLeast(14000).toFloat()
+        val highCut = min((freq1 + 1200).toFloat(), nyquist - 500f)
+        if (highCut <= lowCut + 100f) {
+            setStatus("Status: Audio band invalid")
+            log("Tuning validation failed: bandpass low=$lowCut high=$highCut nyquist=$nyquist")
+            return null
+        }
         return AudioConfig(
             freq0 = freq0,
             freq1 = freq1,
