@@ -85,8 +85,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             try {
-                setStatus("Status: Sending")
-                log("Send start: textLength=${text.length} freq0=${config.freq0}Hz freq1=${config.freq1}Hz bitMs=${(config.bitDurationSeconds * 1000).toInt()} dbLimit=${config.minSignalDbfs}")
+                val payloadBits = text.length * 8
+                val framedBits = Constants.START_MARKER.length + payloadBits + Constants.END_MARKER.length
+                val repeatedBits = framedBits * config.repeatBits
+                val signalDurationSeconds = repeatedBits * config.bitDurationSeconds
+                val totalDurationSeconds = signalDurationSeconds + 0.5
+                val durationLabel = String.format(Locale.getDefault(), "%.1f", totalDurationSeconds)
+                setStatus("Status: Sending (~${durationLabel}s)")
+                log(
+                    "Send start: textLength=${text.length} freq0=${config.freq0}Hz freq1=${config.freq1}Hz bitMs=${(config.bitDurationSeconds * 1000).toInt()} dbLimit=${config.minSignalDbfs} bits=$repeatedBits duration=${durationLabel}s",
+                )
                 transmitter.send(
                     text = text,
                     config = config,

@@ -37,13 +37,26 @@ object Demodulator {
         return chunkEnergy(audio.copyOfRange(0, noiseWindow)) * config.noiseFloorMultiplier
     }
 
-    private fun goertzelPower(chunk: FloatArray, targetFreq: Int, sampleRate: Int): Double {
-        if (chunk.isEmpty()) return 0.0
+    private fun chunkEnergy(audio: FloatArray, start: Int, length: Int): Double {
+        if (length <= 0) return 0.0
+        var sum = 0.0
+        val end = minOf(audio.size, start + length)
+        for (i in start until end) {
+            val s = audio[i]
+            sum += s * s
+        }
+        return sum / length
+    }
+
+    private fun goertzelPower(audio: FloatArray, start: Int, length: Int, targetFreq: Int, sampleRate: Int): Double {
+        if (length <= 0) return 0.0
         val omega = 2.0 * PI * targetFreq / sampleRate
         val coeff = 2.0 * cos(omega)
         var sPrev = 0.0
         var sPrev2 = 0.0
-        for (sample in chunk) {
+        val end = minOf(audio.size, start + length)
+        for (i in start until end) {
+            val sample = audio[i]
             val s = sample + coeff * sPrev - sPrev2
             sPrev2 = sPrev
             sPrev = s
@@ -51,20 +64,9 @@ object Demodulator {
         return sPrev2 * sPrev2 + sPrev * sPrev - coeff * sPrev * sPrev2
     }
 
-    data class DetectionFrame(
-        val bit: Char?,
-        val dominantFrequency: Int,
-        val power0: Double,
-        val power1: Double,
-        val decision: String,
-    )
-
-    fun detectFrequency(chunk: FloatArray, config: AudioConfig): DetectionFrame {
-        if (chunk.isEmpty()) {
-            return DetectionFrame(null, 0, 0.0, 0.0, "ignored")
-        }
-        val power0 = goertzelPower(chunk, config.freq0, config.sampleRate)
-        val power1 = goertzelPower(chunk, config.freq1, config.sampleRate)
+    fun detectFrequency(audio: FloatArray, start: Int, length: Int, config: AudioConfig): DetectionFrame {
+        val power0 = goertzelPower(audio, start, length, config.freq0, config.sampleRate)
+        val power1 = goertzelPower(audio, start, length, config.freq1, config.sampleRate)
         val dominantFrequency = if (power1 > power0) config.freq1 else config.freq0
         val ratio = when {
             power0 >= power1 -> power0 / (power1 + 1e-12)
@@ -79,172 +81,15 @@ object Demodulator {
         }
     }
 
-    private fun scoreStream(bitstream: String): Int {
-        if (bitstream.isEmpty()) return -1
-        var best = -1
-        var start = bitstream.indexOf(Constants.START_MARKER)
-        while (start != -1) {
-            val end = bitstream.indexOf(Constants.END_MARKER, start + Constants.START_MARKER.length)
-            if (end != -1) {
-                best = maxOf(best, frameScore(start, end, Constants.START_MARKER.length, Constants.END_MARKER.length, true))
-            }
-            start = bitstream.indexOf(Constants.START_MARKER, start + 1)
-        }
+    data class DetectionFrame(
+        val bit: Char?,
+        val dominantFrequency: Int,
+        val power0: Double,
+        val power1: Double,
+        val decision: String,
+    )
 
-        return if (best >= 0) best else 0
-    }
-
-    private data class MarkerHit(val index: Int, val matches: Int)
-
-    private fun markerHits(stream: String, marker: String, fromIndex: Int = 0): List<MarkerHit> {
-        if (stream.length < marker.length) return emptyList()
-        val hits = mutableListOf<MarkerHit>()
-        val lastStart = stream.length - marker.length
-        for (index in fromIndex..lastStart) {
-            val matches = markerMatches(stream, index, marker)
-            if (matches >= marker.length - 2) {
-                hits += MarkerHit(index, matches)
-            }
-        }
-        return hits.sortedWith(compareByDescending<MarkerHit> { it.matches }.thenBy { it.index })
-    }
-
-    private fun markerMatches(stream: String, index: Int, marker: String): Int {
-        var matches = 0
-        for (i in marker.indices) {
-            if (stream[index + i] == marker[i]) {
-                matches++
-            }
-        }
-        return matches
-    }
-
-    private fun frameScore(startIndex: Int, endIndex: Int, startMatches: Int, endMatches: Int, exact: Boolean): Int {
-        val payloadBits = (endIndex - (startIndex + Constants.START_MARKER.length)).coerceAtLeast(0)
-        var score = 0
-        score += if (exact) 3000 else 0
-        score += startMatches * 200
-        score += endMatches * 200
-        score += payloadBits
-        score += if (payloadBits % 8 == 0) 150 else 0
-        score -= kotlin.math.abs(payloadBits - 8 * (payloadBits / 8)) * 5
-        return score
-    }
-
-    private fun smoothDetections(rawBits: List<Char?>): List<Char?> {
-        if (rawBits.size < 3) return rawBits.toList()
-        val smoothed = MutableList<Char?>(rawBits.size) { null }
-        for (i in rawBits.indices) {
-            val start = maxOf(0, i - 1)
-            val end = minOf(rawBits.lastIndex, i + 1)
-            val window = rawBits.subList(start, end + 1).filter { it == '0' || it == '1' }
-            if (window.size < 2) continue
-
-            val zeros = window.count { it == '0' }
-            val ones = window.count { it == '1' }
-            smoothed[i] = when {
-                ones > zeros -> '1'
-                zeros > ones -> '0'
-                else -> null
-            }
-        }
-        return smoothed
-    }
-
-    private fun collapseRepeats(rawBits: List<Char?>, repeatBits: Int): String {
-        var bestStream = ""
-        var bestScore = -1
-
-        for (phase in 0 until repeatBits) {
-            val reduced = StringBuilder()
-            var index = phase
-            while (index + repeatBits <= rawBits.size) {
-                val group = rawBits.subList(index, index + repeatBits)
-                val valid = group.filter { it == '0' || it == '1' }
-                if (valid.isNotEmpty()) {
-                    val ones = valid.count { it == '1' }
-                    val zeros = valid.size - ones
-                    reduced.append(if (ones >= zeros) '1' else '0')
-                }
-                index += repeatBits
-            }
-            val stream = reduced.toString()
-            val score = scoreStream(stream)
-            if (score > bestScore) {
-                bestScore = score
-                bestStream = stream
-            }
-        }
-
-        return bestStream
-    }
-
-    fun demodulateBits(audio: FloatArray, config: AudioConfig, onDebug: (String) -> Unit = {}): List<Char> {
-        val filtered = bandPassFilter(audio, config)
-        if (filtered.size < config.chunkSize) return emptyList()
-
-        val energyThreshold = adaptiveEnergyThreshold(filtered, config)
-        val minSignalPower = dbfsToPower(config.minSignalDbfs)
-        onDebug(
-            "Demod start: size=${filtered.size} chunk=${config.chunkSize} hop=${config.hopSize} freq0=${config.freq0}Hz freq1=${config.freq1}Hz band=${config.bandpassLowCutoff}-${config.bandpassHighCutoff}Hz energyTh=${"%.3e".format(energyThreshold)} minPower=${"%.3e".format(minSignalPower)}",
-        )
-
-        val step = maxOf(1, config.hopSize / 8)
-        var bestStream = ""
-        var bestScore = -1
-
-        var offset = 0
-        while (offset < config.hopSize) {
-            val rawBits = ArrayList<Char?>(filtered.size / config.hopSize + 1)
-            var start = offset
-            while (start + config.chunkSize <= filtered.size) {
-                val chunk = filtered.copyOfRange(start, start + config.chunkSize)
-                val energy = chunkEnergy(chunk)
-                val frameThreshold = maxOf(energyThreshold, minSignalPower)
-                if (energy < frameThreshold) {
-                    rawBits.add(null)
-                    onDebug(
-                        "Demod frame: energy=${"%.3e".format(energy)} rejected low-energy threshold=${"%.3e".format(frameThreshold)}",
-                    )
-                    start += config.hopSize
-                    continue
-                }
-
-                val frame = detectFrequency(chunk, config)
-                rawBits.add(frame.bit)
-                onDebug(
-                    "Demod frame: energy=${"%.3e".format(energy)} dom=${frame.dominantFrequency}Hz p0=${"%.3e".format(frame.power0)} p1=${"%.3e".format(frame.power1)} decision=${frame.decision} accepted=${frame.bit != null}",
-                )
-                start += config.hopSize
-            }
-
-            val stream = collapseRepeats(smoothDetections(rawBits), config.repeatBits)
-            val score = scoreStream(stream)
-            onDebug("Demod stream: offset=$offset len=${stream.length} score=$score preview=${previewBits(stream)}")
-            if (score > bestScore) {
-                bestScore = score
-                bestStream = stream
-            }
-            offset += step
-        }
-
-        if (bestStream.isNotEmpty()) {
-            onDebug("Demod selected: len=${bestStream.length} score=$bestScore preview=${previewBits(bestStream)}")
-        }
-        return bestStream.toList()
-    }
-
-    private fun previewBits(bitstream: String): String {
-        if (bitstream.length <= 192) return bitstream
-        return bitstream.take(96) + "..." + bitstream.takeLast(48)
-    }
-
-    private fun dbfsToPower(dbfs: Float): Double {
-        val amplitude = Math.pow(10.0, dbfs / 20.0)
-        return amplitude * amplitude
-    }
-
-    private class Biquad(
+    class Biquad(
         private val b0: Double,
         private val b1: Double,
         private val b2: Double,
@@ -254,8 +99,7 @@ object Demodulator {
         private var z1 = 0.0
         private var z2 = 0.0
 
-        fun process(input: FloatArray): FloatArray {
-            val output = FloatArray(input.size)
+        fun process(input: FloatArray, output: FloatArray = FloatArray(input.size)): FloatArray {
             for (i in input.indices) {
                 val x = input[i].toDouble()
                 val y = x * b0 + z1
@@ -264,6 +108,11 @@ object Demodulator {
                 output[i] = y.toFloat()
             }
             return output
+        }
+
+        fun reset() {
+            z1 = 0.0
+            z2 = 0.0
         }
 
         companion object {

@@ -43,13 +43,6 @@ class Receiver {
                 running.set(false)
                 return@launch
             }
-            val blockFrames = maxOf(4096, config.hopSize * 2)
-            val tailKeep = (config.sampleRate * config.postDetectTailSeconds).toInt()
-            val maxBuffer = (config.sampleRate * config.receiveWindowSeconds).toInt()
-            val readBuffer = ShortArray(blockFrames)
-            var rolling = FloatArray(0)
-            var cooldownUntil = 0L
-            val frameLogs = ArrayDeque<String>()
 
             val inputSource = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
                 MediaRecorder.AudioSource.UNPROCESSED
@@ -57,42 +50,40 @@ class Receiver {
                 MediaRecorder.AudioSource.MIC
             }
 
-            record = AudioRecord.Builder()
-                .setAudioSource(inputSource)
-                .setAudioFormat(
-                    AudioFormat.Builder()
-                        .setSampleRate(config.sampleRate)
-                        .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
-                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                        .build(),
-                )
-                .setBufferSizeInBytes(maxOf(minBuffer, blockFrames * 4, config.chunkSize * 8))
-                .build()
-            if (record == null) {
+            val recorder = try {
+                AudioRecord.Builder()
+                    .setAudioSource(inputSource)
+                    .setAudioFormat(
+                        AudioFormat.Builder()
+                            .setSampleRate(config.sampleRate)
+                            .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
+                            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                            .build(),
+                    )
+                    .setBufferSizeInBytes(maxOf(minBuffer, config.chunkSize * 8))
+                    .build()
+            } catch (e: Exception) {
                 onStatus("Unable to open microphone")
-                onLog("Receive failure: AudioRecord builder returned null")
+                onLog("Receive failure: ${e.message}")
                 running.set(false)
                 return@launch
             }
 
-            val recorder = record ?: run {
-                onStatus("Unable to open microphone")
-                onLog("Receive failure: unable to open microphone")
-                running.set(false)
-                return@launch
-            }
             if (recorder.state != AudioRecord.STATE_INITIALIZED) {
                 onStatus("Unable to initialize microphone")
                 onLog("Receive failure: AudioRecord state=${recorder.state}")
                 recorder.release()
-                record = null
                 running.set(false)
                 return@launch
             }
+            record = recorder
 
             onLog(
                 "Receive config: requestedRate=${config.sampleRate}Hz actualRate=${recorder.sampleRate}Hz channelCount=${recorder.channelCount} encoding=${recorder.audioFormat} buffer=${recorder.bufferSizeInFrames} frames",
             )
+
+            val processor = SignalProcessor(config)
+            val readBuffer = ShortArray(4096)
 
             try {
                 onLog("Receive start: AudioRecord starting source=$inputSource sampleRate=${config.sampleRate}Hz minDb=${config.minSignalDbfs}")
@@ -102,51 +93,24 @@ class Receiver {
                 while (running.get() && isActive) {
                     val read = recorder.read(readBuffer, 0, readBuffer.size)
                     if (read <= 0) {
-                        onLog("Receive read returned $read")
+                        if (read < 0) onLog("Receive read error: $read")
                         continue
                     }
 
                     val block = AudioUtils.toFloats(readBuffer, read)
-                    rolling = AudioUtils.appendBounded(rolling, block, maxBuffer)
-
-                    val now = System.currentTimeMillis()
-                    if (now < cooldownUntil) {
-                        continue
-                    }
-
-                    if (rolling.size < config.chunkSize * 3) {
-                        continue
-                    }
-
-                    frameLogs.clear()
-                    val rollingSeconds = rolling.size.toDouble() / config.sampleRate.toDouble()
-                    onLog(
-                        "Receive decode scope: rolling=${"%.2f".format(rollingSeconds)}s retained=${"%.2f".format(config.receiveWindowSeconds)}s samples=${rolling.size}",
-                    )
-
-                    val message = Decoder.decodeAudio(rolling, config) { debug ->
-                        if (frameLogs.size >= 12) {
-                            frameLogs.removeFirst()
-                        }
-                        frameLogs.addLast(debug)
-                    }
-                    frameLogs.forEach(onLog)
-                    if (message.isNotEmpty()) {
+                    val message = processor.process(block, onLog)
+                    if (message != null) {
                         onMessage(message)
                         onLog("Decode hit: message length=${message.length}")
-                        rolling = AudioUtils.takeTail(rolling, tailKeep)
-                        cooldownUntil = now + (config.postDetectCooldownSeconds * 1000).toLong()
                         onStatus("Message received")
-                    } else {
-                        onLog("Decode miss: no complete frame recovered from rolling buffer")
                     }
                 }
+            } catch (e: Exception) {
+                onLog("Receive loop error: ${e.message}")
             } finally {
                 try {
                     recorder.stop()
-                } catch (_: Throwable) {
-                    onLog("Receive stop failed: recorder.stop threw")
-                }
+                } catch (_: Throwable) {}
                 recorder.release()
                 record = null
                 running.set(false)
@@ -163,9 +127,7 @@ class Receiver {
         onStopLog?.invoke("Receive stop: requested")
         try {
             record?.stop()
-        } catch (_: Throwable) {
-            onStopLog?.invoke("Receive stop failed: recorder.stop threw")
-        }
+        } catch (_: Throwable) {}
         record?.release()
         record = null
         job?.cancel()
